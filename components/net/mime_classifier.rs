@@ -91,6 +91,7 @@ impl Mp4Matcher {
     }
 
 }
+
 impl MIMEChecker for Mp4Matcher {
     fn classify(&self, data:&Vec<u8>)->Option<(String,String)> {
      return if self.matches(data) {
@@ -98,6 +99,71 @@ impl MIMEChecker for Mp4Matcher {
         } else {
             None
         };
+    }
+}
+
+struct FeedMatcher;
+
+impl FeedMatcher {
+    // see if the next matches.len() bytes in data_iterator equal matches
+    // move iterator and return true or just return false
+    // Problem: don't know how to specify passing Iterator
+    fn matches(&self, data_iterator: Iterator, matches:&Vec<u8>)->bool {
+        let data = data_iterator.take(matches.len());
+        if data == matches {
+            // then move iterator
+            // return true
+        }
+        false
+    }
+}
+
+impl MIMEChecker for FeedMatcher {
+    fn classify(&self, data:&Vec<u8>)->Option<(String,String)> {
+        let length = data.len();
+        let mut data_iterator = data.iter();
+
+        // acceptable byte sequences
+        let utf8_bom = vec![0xEFu8,0xBBu8,0xBFu8];
+        let rss = vec![0x72u8,0x73u8,0x73u8];
+        let feed = vec![0x66u8,0x65u8,0x65u8,0x64u8];
+        let rdf = vec![0x72u8,0x64u8,0x66u8,0x3Au8,0x52u8,0x44u8,0x46u8];
+
+        // can not be feed unless length is > 3
+        if length < 3 {
+            return None;
+        }
+
+        // eat the first three bytes if they are equal to UTF-8 BOM
+        // TODO: better to make this data_iterator.matches(utf8_bom)
+        self.matches(data_iterator,utf8_bom);
+
+        // continuously search for next "<" until end of data_iterator
+        // TODO: need max_bytes to prevent inadvertently examining html document
+        //       eg. an html page with a feed example
+        while true {
+            data_iterator = data_iterator.find(|&data_iterator| *data_iterator != 0x3Cu8);
+            let next_byte = data_iterator.next();
+            if next_byte == None {
+                break;
+            }
+
+            // if the next byte is "?" or "!" then move to ">"
+            // if next 3 bytes are "rss" then "application/rss+xml"
+            // if next 4 bytes are "feed" then "application/atom+xml"
+            // if next 7 bytes are "rdf:RDF" then do some extra evaluation
+            if next_byte.unwrap() == &0x21u8 || next_byte.unwrap() == &0x3Fu8 {
+                data_iterator.find(|&data_iterator| *data_iterator != 0x3Eu8);
+            } else if self.matches(data_iterator, rss) {
+                return Some(("application".to_string(), "rss+xml".to_string()))
+            } else if self.matches(data_iterator, feed) {
+                return Some(("application".to_string(), "atom+xml".to_string()))
+            } else if self.matches(data_iterator, rdf) {
+                // do some more.
+            }
+        }
+
+        return None;
     }
 }
 
@@ -173,11 +239,15 @@ impl MIMEClassifier {
          ret.byte_matchers.push(box ByteMatcher::text_html_p_3e());
          ret.byte_matchers.push(box ByteMatcher::text_html_comment_20());
          ret.byte_matchers.push(box ByteMatcher::text_html_comment_3e());
+         // where xml is prevents FeedMatcher from being run since
+         // feeds are xml
          ret.byte_matchers.push(box ByteMatcher::text_xml());
          ret.byte_matchers.push(box ByteMatcher::application_pdf());
 
          //Specialized matchers
          ret.byte_matchers.push(box Mp4Matcher);
+         ret.byte_matchers.push(box FeedMatcher);
+
          return ret;
 
     }
@@ -215,7 +285,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "BM", a BMP signature. 
+    //The string "BM", a BMP signature.
     fn image_bmp()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x42u8,0x4Du8],
@@ -224,7 +294,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "GIF87a", a GIF signature. 
+    //The string "GIF87a", a GIF signature.
     fn image_gif89a()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x47u8,0x49u8,0x46u8,0x38u8,0x39u8,0x61u8],
@@ -233,7 +303,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "GIF89a", a GIF signature. 
+    //The string "GIF89a", a GIF signature.
     fn image_gif87a()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x47u8,0x49u8,0x46u8,0x38u8,0x37u8,0x61u8],
@@ -253,8 +323,8 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //An error-checking byte followed by the string "PNG" followed by CR LF SUB LF, the PNG 
-    //signature. 
+    //An error-checking byte followed by the string "PNG" followed by CR LF SUB LF, the PNG
+    //signature.
     fn image_png()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x89u8,0x50u8,0x4Eu8,0x47u8,0x0Du8,0x0Au8,0x1Au8,0x0Au8],
@@ -272,7 +342,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The WebM signature. [TODO: Use more bytes?] 
+    //The WebM signature. [TODO: Use more bytes?]
     fn video_webm()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x1Au8,0x45u8,0xDFu8,0xA3u8],
@@ -281,7 +351,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string ".snd", the basic audio signature. 
+    //The string ".snd", the basic audio signature.
     fn audio_basic()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x2Eu8,0x73u8,0x6Eu8,0x64u8],
@@ -299,7 +369,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "ID3", the ID3v2-tagged MP3 signature. 
+    //The string "ID3", the ID3v2-tagged MP3 signature.
     fn audio_mpeg()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x49u8,0x44u8,0x33u8],
@@ -308,7 +378,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "OggS" followed by NUL, the Ogg container signature. 
+    //The string "OggS" followed by NUL, the Ogg container signature.
     fn application_ogg()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x4Fu8,0x67u8,0x67u8,0x53u8,0x00u8],
@@ -318,7 +388,7 @@ impl ByteMatcher {
         }
     }
     //The string "MThd" followed by four bytes representing the number 6 in 32 bits (big-endian),
-    //the MIDI signature. 
+    //the MIDI signature.
     fn audio_midi()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x4Du8,0x54u8,0x68u8,0x64u8,0x00u8,0x00u8,0x00u8,0x06u8],
@@ -668,7 +738,7 @@ impl ByteMatcher {
             leading_ignore:vec![0x09u8,0x0Au8,0x0Cu8,0x0Du8,0x20u8]
      }
     }
-    //The string "%PDF-", the PDF signature. 
+    //The string "%PDF-", the PDF signature.
     fn application_pdf()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x25u8,0x50u8,0x44u8,0x46u8,0x2Du8],
@@ -694,7 +764,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //4 bytes representing the version number 1.0, a TrueType signature. 
+    //4 bytes representing the version number 1.0, a TrueType signature.
     fn true_type()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x00u8,0x01u8,0x00u8,0x00u8],
@@ -703,7 +773,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "OTTO", the OpenType signature. 
+    //The string "OTTO", the OpenType signature.
     fn open_type()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x4Fu8,0x54u8,0x54u8,0x4Fu8],
@@ -712,7 +782,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    // 	The string "ttcf", the TrueType Collection signature. 
+    // 	The string "ttcf", the TrueType Collection signature.
     fn true_type_collection()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x74u8,0x74u8,0x63u8,0x66u8],
@@ -721,7 +791,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    // 	The string "wOFF", the Web Open Font Format signature. 
+    // 	The string "wOFF", the Web Open Font Format signature.
     fn application_font_woff()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x77u8,0x4Fu8,0x46u8,0x46u8],
@@ -730,7 +800,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The GZIP archive signature. 
+    //The GZIP archive signature.
     fn application_x_gzip()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x1Fu8,0x8Bu8,0x08u8],
@@ -739,7 +809,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "PK" followed by ETX EOT, the ZIP archive signature. 
+    //The string "PK" followed by ETX EOT, the ZIP archive signature.
     fn application_zip()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x50u8,0x4Bu8,0x03u8,0x04u8],
@@ -748,7 +818,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //The string "Rar " followed by SUB BEL NUL, the RAR archive signature. 
+    //The string "Rar " followed by SUB BEL NUL, the RAR archive signature.
     fn application_x_rar_compressed()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x52u8,0x61u8,0x72u8,0x20u8,0x1Au8,0x07u8,0x00u8],
@@ -757,7 +827,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    // 	The string "%!PS-Adobe-", the PostScript signature. 
+    // 	The string "%!PS-Adobe-", the PostScript signature.
     fn application_postscript()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0x25u8,0x21u8,0x50u8,0x53u8,0x2Du8,0x41u8,0x64u8,0x6Fu8,
@@ -768,7 +838,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    // 	UTF-16BE BOM 
+    // 	UTF-16BE BOM
     fn text_plain_utf_16be_bom()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0xFEu8,0xFFu8,0x00u8,0x00u8],
@@ -777,7 +847,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //UTF-16LE BOM 
+    //UTF-16LE BOM
     fn text_plain_utf_16le_bom()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0xFFu8,0xFEu8,0x00u8,0x00u8],
@@ -786,7 +856,7 @@ impl ByteMatcher {
             leading_ignore:vec![]
         }
     }
-    //UTF-8 BOM 
+    //UTF-8 BOM
     fn text_plain_utf_8_bom()->ByteMatcher {
         return ByteMatcher{
             pattern:vec![0xEFu8,0xBBu8,0xBFu8,0x00u8],
