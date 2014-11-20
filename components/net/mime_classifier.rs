@@ -116,19 +116,16 @@ impl MIMEChecker for Mp4Matcher {
 }
 
 trait Matches {
-    fn matches(&self, matches:&Vec<u8>)->bool;
+    fn matches(&mut self, matches:&Vec<u8>)->bool;
 }
 
-impl <T:Iterator<u8>> Matches for T {
+impl <'a, T: Iterator<&'a u8>+Clone> Matches for T {
     // see if the next matches.len() bytes in data_iterator equal matches
     // move iterator and return true or just return false
-    fn matches (&self, matches:&Vec<u8>)->bool{
-        let data = self.take(matches.len());
-        if data == matches {
-            self.nth(matches.len());
-            return true;
-        }
-        false
+    fn matches(&mut self, matches: &Vec<u8>) -> bool {
+        let ret = self.clone().take(matches.len()).zip(matches.iter()).all(|(a,b)| *a == *b);
+        self.nth(matches.len()+1);
+        ret
     }
 }
 
@@ -140,10 +137,10 @@ impl MIMEChecker for FeedMatcher {
         let mut data_iterator = data.iter();
 
         // acceptable byte sequences
-        let utf8_bom = vec![0xEFu8,0xBBu8,0xBFu8];
-        let rss = vec![0x72u8,0x73u8,0x73u8];
-        let feed = vec![0x66u8,0x65u8,0x65u8,0x64u8];
-        let rdf = vec![0x72u8,0x64u8,0x66u8,0x3Au8,0x52u8,0x44u8,0x46u8];
+        let utf8_bom = vec!(0xEFu8,0xBBu8,0xBFu8);
+        let rss = vec!(0x72u8,0x73u8,0x73u8);
+        let feed = vec!(0x66u8,0x65u8,0x65u8,0x64u8);
+        let rdf = vec!(0x72u8,0x64u8,0x66u8,0x3Au8,0x52u8,0x44u8,0x46u8);
 
         // can not be feed unless length is > 3
         if length < 3 {
@@ -151,34 +148,31 @@ impl MIMEChecker for FeedMatcher {
         }
 
         // eat the first three bytes if they are equal to UTF-8 BOM
-        data_iterator.matches(utf8_bom);
+        data_iterator.matches(&utf8_bom);
 
         // continuously search for next "<" until end of data_iterator
         // TODO: need max_bytes to prevent inadvertently examining html document
         //       eg. an html page with a feed example
-        while let next_byte = Some {
-            data_iterator.find(|&data_iterator| *data_iterator == 0x3Cu8);
-            match data_iterator.next() {
-                Some(next_byte) => {
-                    // if the next byte is "?" or "!" then move to ">"
-                    // if next 3 bytes are "rss" then "application/rss+xml"
-                    // if next 4 bytes are "feed" then "application/atom+xml"
-                    // if next 7 bytes are "rdf:RDF" then do some extra evaluation
-                    if next_byte == &0x21u8 || next_byte == &0x3Fu8 {
-                        data_iterator.find(|&data_iterator| *data_iterator != 0x3Eu8);
-                    } else if data_iterator.matches(rss) {
-                        return Some(("application".to_string(), "rss+xml".to_string()))
-                    } else if data_iterator.matches(feed) {
-                        return Some(("application".to_string(), "atom+xml".to_string()))
-                    } else if data_iterator.matches(rdf) {
-                        // do some more.
-                    }
-                },
-                None => break
+        loop {
+            if data_iterator.find(|&data_iterator| *data_iterator == 0x3Cu8) == None {
+                return None;
+            }
+            // if the next byte is "?" or "!" then move to ">"
+            // if next 3 bytes are "rss" then "application/rss+xml"
+            // if next 4 bytes are "feed" then "application/atom+xml"
+            // if next 7 bytes are "rdf:RDF" then do some extra evaluation
+            if data_iterator.matches(&vec!(0x21u8)) || data_iterator.matches(&vec!(0x3Fu8)) {
+                data_iterator.find(|&data_iterator| *data_iterator != 0x3Eu8);
+            } else if data_iterator.matches(&rss) {
+                return Some(("application".to_string(), "rss+xml".to_string()))
+            } else if data_iterator.matches(&feed) {
+                return Some(("application".to_string(), "atom+xml".to_string()))
+            } else if data_iterator.matches(&rdf) {
+                // do some more.
             }
         }
 
-        return None;
+
     }
 }
 
@@ -256,7 +250,7 @@ impl MIMEClassifier {
          ret.byte_matchers.push(box ByteMatcher::text_html_comment_3e());
          // where xml is prevents FeedMatcher from being run since
          // feeds are xml
-         ret.byte_matchers.push(box ByteMatcher::text_xml());
+         //  ret.byte_matchers.push(box ByteMatcher::text_xml());
          ret.byte_matchers.push(box ByteMatcher::application_pdf());
 
          //Specialized matchers
