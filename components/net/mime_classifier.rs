@@ -2,6 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// TODO Manishearth:
+// It might be worth returning &'static str isntead of String if the return value is going to be hardcoded
+// [1:32pm] Manishearth:
+// (at all times)
+// [1:33pm] Manishearth:
+// &'static str takes up no heap space, it's just a poitner into the program code.
+// [1:33pm] Manishearth:
+// (But only good if you are *always* returning a hardcoded string)
+// [1:33pm] Manishearth:
+// and thats a minor optimization
+
+#![feature(while_let)]
+
 trait MIMEChecker {
     fn classify(&self, data:&Vec<u8>)->Option<(String,String)>;
 }
@@ -102,21 +115,24 @@ impl MIMEChecker for Mp4Matcher {
     }
 }
 
-struct FeedMatcher;
+trait Matches {
+    fn matches(&self, matches:&Vec<u8>)->bool;
+}
 
-impl FeedMatcher {
+impl <T:Iterator<u8>> Matches for T {
     // see if the next matches.len() bytes in data_iterator equal matches
     // move iterator and return true or just return false
-    // Problem: don't know how to specify passing Iterator
-    fn matches(&self, data_iterator: Iterator, matches:&Vec<u8>)->bool {
-        let data = data_iterator.take(matches.len());
+    fn matches (&self, matches:&Vec<u8>)->bool{
+        let data = self.take(matches.len());
         if data == matches {
-            // then move iterator
-            // return true
+            self.nth(matches.len());
+            return true;
         }
         false
     }
 }
+
+struct FeedMatcher;
 
 impl MIMEChecker for FeedMatcher {
     fn classify(&self, data:&Vec<u8>)->Option<(String,String)> {
@@ -135,31 +151,30 @@ impl MIMEChecker for FeedMatcher {
         }
 
         // eat the first three bytes if they are equal to UTF-8 BOM
-        // TODO: better to make this data_iterator.matches(utf8_bom)
-        self.matches(data_iterator,utf8_bom);
+        data_iterator.matches(utf8_bom);
 
         // continuously search for next "<" until end of data_iterator
         // TODO: need max_bytes to prevent inadvertently examining html document
         //       eg. an html page with a feed example
-        while true {
-            data_iterator = data_iterator.find(|&data_iterator| *data_iterator != 0x3Cu8);
-            let next_byte = data_iterator.next();
-            if next_byte == None {
-                break;
-            }
-
-            // if the next byte is "?" or "!" then move to ">"
-            // if next 3 bytes are "rss" then "application/rss+xml"
-            // if next 4 bytes are "feed" then "application/atom+xml"
-            // if next 7 bytes are "rdf:RDF" then do some extra evaluation
-            if next_byte.unwrap() == &0x21u8 || next_byte.unwrap() == &0x3Fu8 {
-                data_iterator.find(|&data_iterator| *data_iterator != 0x3Eu8);
-            } else if self.matches(data_iterator, rss) {
-                return Some(("application".to_string(), "rss+xml".to_string()))
-            } else if self.matches(data_iterator, feed) {
-                return Some(("application".to_string(), "atom+xml".to_string()))
-            } else if self.matches(data_iterator, rdf) {
-                // do some more.
+        while let next_byte = Some {
+            data_iterator.find(|&data_iterator| *data_iterator == 0x3Cu8);
+            match data_iterator.next() {
+                Some(next_byte) => {
+                    // if the next byte is "?" or "!" then move to ">"
+                    // if next 3 bytes are "rss" then "application/rss+xml"
+                    // if next 4 bytes are "feed" then "application/atom+xml"
+                    // if next 7 bytes are "rdf:RDF" then do some extra evaluation
+                    if next_byte == &0x21u8 || next_byte == &0x3Fu8 {
+                        data_iterator.find(|&data_iterator| *data_iterator != 0x3Eu8);
+                    } else if data_iterator.matches(rss) {
+                        return Some(("application".to_string(), "rss+xml".to_string()))
+                    } else if data_iterator.matches(feed) {
+                        return Some(("application".to_string(), "atom+xml".to_string()))
+                    } else if data_iterator.matches(rdf) {
+                        // do some more.
+                    }
+                },
+                None => break
             }
         }
 
