@@ -124,7 +124,7 @@ impl <'a, T: Iterator<&'a u8>+Clone> Matches for T {
     // move iterator and return true or just return false
     fn matches(&mut self, matches: &Vec<u8>) -> bool {
         let ret = self.clone().take(matches.len()).zip(matches.iter()).all(|(a,b)| *a == *b);
-        self.nth(matches.len()+1);
+        self.nth(matches.len());
         ret
     }
 }
@@ -138,9 +138,6 @@ impl MIMEChecker for FeedMatcher {
 
         // acceptable byte sequences
         let utf8_bom = vec!(0xEFu8,0xBBu8,0xBFu8);
-        let rss = vec!(0x72u8,0x73u8,0x73u8);
-        let feed = vec!(0x66u8,0x65u8,0x65u8,0x64u8);
-        let rdf = vec!(0x72u8,0x64u8,0x66u8,0x3Au8,0x52u8,0x44u8,0x46u8);
 
         // can not be feed unless length is > 3
         if length < 3 {
@@ -153,26 +150,34 @@ impl MIMEChecker for FeedMatcher {
         // continuously search for next "<" until end of data_iterator
         // TODO: need max_bytes to prevent inadvertently examining html document
         //       eg. an html page with a feed example
-        loop {
-            if data_iterator.find(|&data_iterator| *data_iterator == 0x3Cu8) == None {
-                return None;
-            }
-            // if the next byte is "?" or "!" then move to ">"
-            // if next 3 bytes are "rss" then "application/rss+xml"
-            // if next 4 bytes are "feed" then "application/atom+xml"
-            // if next 7 bytes are "rdf:RDF" then do some extra evaluation
-            if data_iterator.matches(&vec!(0x21u8)) || data_iterator.matches(&vec!(0x3Fu8)) {
-                data_iterator.find(|&data_iterator| *data_iterator != 0x3Eu8);
-            } else if data_iterator.matches(&rss) {
+        while !data_iterator.find(|&data_iterator| *data_iterator == b'<').is_none() {
+
+            if data_iterator.matches(&"?".as_bytes().to_vec()) {
+                // eat until ?>
+                while !data_iterator.matches(&"?>".as_bytes().to_vec()) {
+                    if data_iterator.next().is_none() {
+                        return None;
+                    }
+                }
+            } else if data_iterator.matches(&"!--".as_bytes().to_vec()) {
+                // eat until -->
+                while !data_iterator.matches(&"-->".as_bytes().to_vec()) {
+                    if data_iterator.next().is_none() {
+                        return None;
+                    }
+                }
+            } else if data_iterator.matches(&"!".as_bytes().to_vec()) {
+                data_iterator.find(|&data_iterator| *data_iterator == b'>');
+            } else if data_iterator.matches(&"rss".as_bytes().to_vec()) {
                 return Some(("application".to_string(), "rss+xml".to_string()))
-            } else if data_iterator.matches(&feed) {
+            } else if data_iterator.matches(&"feed".as_bytes().to_vec()) {
                 return Some(("application".to_string(), "atom+xml".to_string()))
-            } else if data_iterator.matches(&rdf) {
+            } else if data_iterator.matches(&"rdf:RDF".as_bytes().to_vec()) {
                 // do some more.
             }
         }
 
-
+        return None;
     }
 }
 
